@@ -1,12 +1,11 @@
 package com.godweapons.orbital;
 
 import net.kyori.adventure.text.Component;
-import net.kyori.adventure.text.format.NamedTextColor;
-import net.kyori.adventure.text.format.TextDecoration;
 import org.bukkit.*;
 import org.bukkit.command.Command;
 import org.bukkit.command.CommandExecutor;
 import org.bukkit.command.CommandSender;
+import org.bukkit.enchantments.Enchantment;
 import org.bukkit.entity.*;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.Listener;
@@ -38,6 +37,7 @@ public final class OrbitalTridentPlugin extends JavaPlugin implements Listener, 
         if (getCommand("orbitalcannon") != null) {
             getCommand("orbitalcannon").setExecutor(this);
         }
+        getLogger().info("⚡ Orbital Trident Cannon V2 loaded! Vanilla aesthetic locked.");
     }
 
     @Override
@@ -45,16 +45,19 @@ public final class OrbitalTridentPlugin extends JavaPlugin implements Listener, 
         if (sender instanceof Player player && player.hasPermission("godweapons.admin")) {
             ItemStack trident = new ItemStack(Material.TRIDENT);
             ItemMeta meta = trident.getItemMeta();
-            meta.displayName(Component.text("Orbital Trident Cannon", NamedTextColor.AQUA).decoration(TextDecoration.BOLD, true));
+            
+            // Plain vanilla text, no custom colors
+            meta.displayName(Component.text("Orbital Trident Cannon"));
             List<Component> lore = new ArrayList<>();
-            lore.add(Component.text("Throw to call down a celestial bombardment.", NamedTextColor.GRAY));
+            lore.add(Component.text("Throw to call down a celestial bombardment."));
             meta.lore(lore);
+            
             meta.getPersistentDataContainer().set(weaponKey, PersistentDataType.STRING, "orbital_cannon");
             meta.setUnbreakable(true);
             trident.setItemMeta(meta);
             
             player.getInventory().addItem(trident);
-            player.sendMessage(Component.text("Equipped the Orbital Trident Cannon.", NamedTextColor.GREEN));
+            player.sendMessage(Component.text("Equipped the Orbital Trident Cannon."));
         }
         return true;
     }
@@ -76,6 +79,7 @@ public final class OrbitalTridentPlugin extends JavaPlugin implements Listener, 
     public void onTridentLand(ProjectileHitEvent event) {
         if (!(event.getEntity() instanceof Trident trident)) return;
 
+        // Sequence 1: The original thrown trident lands
         if (trident.getPersistentDataContainer().has(thrownKey, PersistentDataType.BYTE)) {
             Location hitLoc = null;
             if (event.getHitBlock() != null) hitLoc = event.getHitBlock().getLocation();
@@ -83,15 +87,13 @@ public final class OrbitalTridentPlugin extends JavaPlugin implements Listener, 
             
             if (hitLoc == null) return;
             
+            // Instantly despawn the original trident
             trident.remove();
-
-            hitLoc.getWorld().playSound(hitLoc, Sound.ENTITY_WITHER_SPAWN, 2.0f, 0.5f);
-            hitLoc.getWorld().spawnParticle(Particle.REVERSE_PORTAL, hitLoc, 150, 3, 0.5, 3, 0.1);
-            hitLoc.getWorld().spawnParticle(Particle.SOUL_FIRE_FLAME, hitLoc, 100, 3, 0.5, 3, 0.1);
 
             Location finalHitLoc = hitLoc.clone();
             Player shooter = trident.getShooter() instanceof Player ? (Player) trident.getShooter() : null;
 
+            // Initiate strike delay without any flashy particles
             new BukkitRunnable() {
                 @Override
                 public void run() {
@@ -100,12 +102,9 @@ public final class OrbitalTridentPlugin extends JavaPlugin implements Listener, 
             }.runTaskLater(this, 15); 
         }
         
+        // Sequence 2: The raining tridents from the sky hit the ground
         else if (trident.getPersistentDataContainer().has(rainKey, PersistentDataType.BYTE)) {
             Location hitLoc = trident.getLocation();
-            
-            hitLoc.getWorld().playSound(hitLoc, Sound.ENTITY_LIGHTNING_BOLT_IMPACT, 1.0f, 1.8f);
-            hitLoc.getWorld().spawnParticle(Particle.EXPLOSION, hitLoc, 1);
-            hitLoc.getWorld().spawnParticle(Particle.END_ROD, hitLoc, 10, 0.5, 0.5, 0.5, 0.1);
             
             for (Entity e : hitLoc.getWorld().getNearbyEntities(hitLoc, 2.0, 2.0, 2.0)) {
                 if (e instanceof LivingEntity le && !e.equals(trident.getShooter())) {
@@ -113,11 +112,11 @@ public final class OrbitalTridentPlugin extends JavaPlugin implements Listener, 
                 }
             }
             
+            // Clean them up after a few seconds without smoke particles
             new BukkitRunnable() {
                 @Override
                 public void run() {
                     if (trident.isValid()) {
-                        trident.getWorld().spawnParticle(Particle.SMOKE, trident.getLocation(), 5, 0.1, 0.1, 0.1, 0.05);
                         trident.remove();
                     }
                 }
@@ -131,10 +130,15 @@ public final class OrbitalTridentPlugin extends JavaPlugin implements Listener, 
         int[] ringCounts = {1, 8, 16, 24};
         double[] ringRadii = {0.0, 3.0, 6.0, 9.0};
 
+        // Create the vanilla Channeling Item profile to apply to the falling entities
+        ItemStack channeledTrident = new ItemStack(Material.TRIDENT);
+        channeledTrident.addEnchantment(Enchantment.CHANNELING, 1);
+
         for (int i = 0; i < ringCounts.length; i++) {
             int count = ringCounts[i];
             double radius = ringRadii[i];
 
+            // Generates a perfect trigonometric circle of tridents
             for (int j = 0; j < count; j++) {
                 double angle = 2 * Math.PI * j / count;
                 double x = Math.cos(angle) * radius;
@@ -149,7 +153,10 @@ public final class OrbitalTridentPlugin extends JavaPlugin implements Listener, 
                 if (shooter != null) rainingTrident.setShooter(shooter);
                 
                 rainingTrident.setVelocity(new Vector(0, -4.0, 0));
-                rainingTrident.setGlowing(true);
+                
+                // Vanilla Overrides
+                rainingTrident.setItem(channeledTrident); // Grants Channeling enchant physically
+                rainingTrident.setPickupStatus(AbstractArrow.PickupStatus.DISALLOWED); // Prevents item harvesting
             }
         }
     }
