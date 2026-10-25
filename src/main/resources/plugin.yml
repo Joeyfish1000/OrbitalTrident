@@ -1,0 +1,8 @@
+name: OrbitalCannon
+version: 1.0.0
+main: com.godweapons.orbital.OrbitalTridentPlugin
+api-version: '1.21'
+commands:
+  orbitalcannon:
+    description: Bestow the Orbital Trident Cannon
+    permission: godweapons.admin
