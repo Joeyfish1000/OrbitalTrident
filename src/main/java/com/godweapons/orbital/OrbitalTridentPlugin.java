@@ -20,44 +20,71 @@ import org.bukkit.util.Vector;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Random;
 
 public final class OrbitalTridentPlugin extends JavaPlugin implements Listener, CommandExecutor {
 
     private NamespacedKey weaponKey;
     private NamespacedKey thrownKey;
     private NamespacedKey rainKey;
+    private NamespacedKey radiusKey;
+    private NamespacedKey countKey;
 
     @Override
     public void onEnable() {
         this.weaponKey = new NamespacedKey(this, "weapon_id");
         this.thrownKey = new NamespacedKey(this, "is_orbital_thrown");
         this.rainKey = new NamespacedKey(this, "is_orbital_rain");
+        
+        // V4: Parameter Keys
+        this.radiusKey = new NamespacedKey(this, "orbital_radius");
+        this.countKey = new NamespacedKey(this, "orbital_count");
 
         getServer().getPluginManager().registerEvents(this, this);
         if (getCommand("orbitalcannon") != null) {
             getCommand("orbitalcannon").setExecutor(this);
         }
-        getLogger().info("⚡ Orbital Trident Cannon V2 loaded! Vanilla aesthetic locked.");
+        getLogger().info("⚡ Orbital Trident Cannon V4 loaded! Parametric arguments enabled.");
     }
 
     @Override
     public boolean onCommand(CommandSender sender, Command command, String label, String[] args) {
         if (sender instanceof Player player && player.hasPermission("godweapons.admin")) {
+            
+            double radius = 9.0;
+            int count = 241;
+            
+            // Parse custom parameters if provided
+            if (args.length == 2) {
+                try {
+                    radius = Double.parseDouble(args[0]);
+                    count = Integer.parseInt(args[1]);
+                } catch (NumberFormatException e) {
+                    player.sendMessage(Component.text("Invalid numbers. Usage: /orbitalcannon <radius> <count>"));
+                    return true;
+                }
+            }
+            
             ItemStack trident = new ItemStack(Material.TRIDENT);
             ItemMeta meta = trident.getItemMeta();
             
-            // Plain vanilla text, no custom colors
             meta.displayName(Component.text("Orbital Trident Cannon"));
             List<Component> lore = new ArrayList<>();
-            lore.add(Component.text("Throw to call down a celestial bombardment."));
+            lore.add(Component.text("Radius: " + radius));
+            lore.add(Component.text("Payload: " + count + " Tridents"));
             meta.lore(lore);
             
             meta.getPersistentDataContainer().set(weaponKey, PersistentDataType.STRING, "orbital_cannon");
+            
+            // Stamp the geometry data onto the item
+            meta.getPersistentDataContainer().set(radiusKey, PersistentDataType.DOUBLE, radius);
+            meta.getPersistentDataContainer().set(countKey, PersistentDataType.INTEGER, count);
+            
             meta.setUnbreakable(true);
             trident.setItemMeta(meta);
             
             player.getInventory().addItem(trident);
-            player.sendMessage(Component.text("Equipped the Orbital Trident Cannon."));
+            player.sendMessage(Component.text("Equipped Parametric Orbital Cannon (R: " + radius + ", C: " + count + ")."));
         }
         return true;
     }
@@ -70,6 +97,14 @@ public final class OrbitalTridentPlugin extends JavaPlugin implements Listener, 
                 String id = item.getItemMeta().getPersistentDataContainer().get(weaponKey, PersistentDataType.STRING);
                 if ("orbital_cannon".equals(id)) {
                     trident.getPersistentDataContainer().set(thrownKey, PersistentDataType.BYTE, (byte) 1);
+                    
+                    // Transfer parameter data to the thrown entity
+                    if (item.getItemMeta().getPersistentDataContainer().has(radiusKey, PersistentDataType.DOUBLE)) {
+                        double r = item.getItemMeta().getPersistentDataContainer().get(radiusKey, PersistentDataType.DOUBLE);
+                        int c = item.getItemMeta().getPersistentDataContainer().get(countKey, PersistentDataType.INTEGER);
+                        trident.getPersistentDataContainer().set(radiusKey, PersistentDataType.DOUBLE, r);
+                        trident.getPersistentDataContainer().set(countKey, PersistentDataType.INTEGER, c);
+                    }
                 }
             }
         }
@@ -87,17 +122,21 @@ public final class OrbitalTridentPlugin extends JavaPlugin implements Listener, 
             
             if (hitLoc == null) return;
             
+            // Extract geometry data before deletion
+            double radius = trident.getPersistentDataContainer().getOrDefault(radiusKey, PersistentDataType.DOUBLE, 9.0);
+            int count = trident.getPersistentDataContainer().getOrDefault(countKey, PersistentDataType.INTEGER, 241);
+            
             // Instantly despawn the original trident
             trident.remove();
 
             Location finalHitLoc = hitLoc.clone();
             Player shooter = trident.getShooter() instanceof Player ? (Player) trident.getShooter() : null;
 
-            // Initiate strike delay without any flashy particles
+            // Initiate strike delay
             new BukkitRunnable() {
                 @Override
                 public void run() {
-                    launchOrbitalStrike(finalHitLoc, shooter);
+                    launchOrbitalStrike(finalHitLoc, shooter, radius, count);
                 }
             }.runTaskLater(this, 15); 
         }
@@ -112,7 +151,7 @@ public final class OrbitalTridentPlugin extends JavaPlugin implements Listener, 
                 }
             }
             
-            // Clean them up after a few seconds without smoke particles
+            // Clean them up after a few seconds
             new BukkitRunnable() {
                 @Override
                 public void run() {
@@ -124,40 +163,32 @@ public final class OrbitalTridentPlugin extends JavaPlugin implements Listener, 
         }
     }
 
-    private void launchOrbitalStrike(Location target, Player shooter) {
+    private void launchOrbitalStrike(Location target, Player shooter, double maxRadius, int totalCount) {
         double startY = Math.min(target.getWorld().getMaxHeight() - 5, target.getY() + 60);
 
-        int[] ringCounts = {1, 8, 16, 24};
-        double[] ringRadii = {0.0, 3.0, 6.0, 9.0};
-
-        // Create the vanilla Channeling Item profile to apply to the falling entities
         ItemStack channeledTrident = new ItemStack(Material.TRIDENT);
         channeledTrident.addEnchantment(Enchantment.CHANNELING, 1);
+        Random random = new Random();
 
-        for (int i = 0; i < ringCounts.length; i++) {
-            int count = ringCounts[i];
-            double radius = ringRadii[i];
+        for (int i = 0; i < totalCount; i++) {
+            // V4: Uniform Disk Distribution Math
+            double r = maxRadius * Math.sqrt(random.nextDouble());
+            double theta = random.nextDouble() * 2 * Math.PI;
+            
+            double x = r * Math.cos(theta);
+            double z = r * Math.sin(theta);
 
-            // Generates a perfect trigonometric circle of tridents
-            for (int j = 0; j < count; j++) {
-                double angle = 2 * Math.PI * j / count;
-                double x = Math.cos(angle) * radius;
-                double z = Math.sin(angle) * radius;
+            Location spawnLoc = target.clone().add(x, 0, z);
+            spawnLoc.setY(startY);
 
-                Location spawnLoc = target.clone().add(x, 0, z);
-                spawnLoc.setY(startY);
-
-                Trident rainingTrident = target.getWorld().spawn(spawnLoc, Trident.class);
-                
-                rainingTrident.getPersistentDataContainer().set(rainKey, PersistentDataType.BYTE, (byte) 1);
-                if (shooter != null) rainingTrident.setShooter(shooter);
-                
-                rainingTrident.setVelocity(new Vector(0, -4.0, 0));
-                
-                // Vanilla Overrides
-                rainingTrident.setItem(channeledTrident); // Grants Channeling enchant physically
-                rainingTrident.setPickupStatus(AbstractArrow.PickupStatus.DISALLOWED); // Prevents item harvesting
-            }
+            Trident rainingTrident = target.getWorld().spawn(spawnLoc, Trident.class);
+            
+            rainingTrident.getPersistentDataContainer().set(rainKey, PersistentDataType.BYTE, (byte) 1);
+            if (shooter != null) rainingTrident.setShooter(shooter);
+            
+            rainingTrident.setVelocity(new Vector(0, -4.0, 0));
+            rainingTrident.setItem(channeledTrident); 
+            rainingTrident.setPickupStatus(AbstractArrow.PickupStatus.DISALLOWED);
         }
     }
 }
