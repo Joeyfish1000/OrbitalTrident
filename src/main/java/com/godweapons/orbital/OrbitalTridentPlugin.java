@@ -27,8 +27,12 @@ public final class OrbitalTridentPlugin extends JavaPlugin implements Listener, 
     private NamespacedKey weaponKey;
     private NamespacedKey thrownKey;
     private NamespacedKey rainKey;
+    
+    // Command Parameters
     private NamespacedKey radiusKey;
     private NamespacedKey countKey;
+    private NamespacedKey wavesKey;
+    private NamespacedKey delayKey;
 
     @Override
     public void onEnable() {
@@ -36,31 +40,43 @@ public final class OrbitalTridentPlugin extends JavaPlugin implements Listener, 
         this.thrownKey = new NamespacedKey(this, "is_orbital_thrown");
         this.rainKey = new NamespacedKey(this, "is_orbital_rain");
         
-        // V4: Parameter Keys
         this.radiusKey = new NamespacedKey(this, "orbital_radius");
         this.countKey = new NamespacedKey(this, "orbital_count");
+        this.wavesKey = new NamespacedKey(this, "orbital_waves");
+        this.delayKey = new NamespacedKey(this, "orbital_delay");
 
         getServer().getPluginManager().registerEvents(this, this);
         if (getCommand("orbitalcannon") != null) {
             getCommand("orbitalcannon").setExecutor(this);
         }
-        getLogger().info("⚡ Orbital Trident Cannon V4 loaded! Parametric arguments enabled.");
+        getLogger().info("⚡ Orbital Trident Cannon V5 loaded! Multi-wave celestial bombardment active.");
     }
 
     @Override
     public boolean onCommand(CommandSender sender, Command command, String label, String[] args) {
         if (sender instanceof Player player && player.hasPermission("godweapons.admin")) {
             
+            // Default Values
             double radius = 9.0;
             int count = 241;
+            int waves = 1;
+            long delay = 20; // 1 second between waves
             
-            // Parse custom parameters if provided
-            if (args.length == 2) {
+            if (args.length >= 2) {
                 try {
                     radius = Double.parseDouble(args[0]);
                     count = Integer.parseInt(args[1]);
                 } catch (NumberFormatException e) {
-                    player.sendMessage(Component.text("Invalid numbers. Usage: /orbitalcannon <radius> <count>"));
+                    player.sendMessage(Component.text("Invalid numbers. Usage: /orbitalcannon <radius> <count> [waves] [delay_ticks]"));
+                    return true;
+                }
+            }
+            if (args.length >= 4) {
+                try {
+                    waves = Integer.parseInt(args[2]);
+                    delay = Long.parseLong(args[3]);
+                } catch (NumberFormatException e) {
+                    player.sendMessage(Component.text("Invalid numbers. Usage: /orbitalcannon <radius> <count> <waves> <delay_ticks>"));
                     return true;
                 }
             }
@@ -71,20 +87,23 @@ public final class OrbitalTridentPlugin extends JavaPlugin implements Listener, 
             meta.displayName(Component.text("Orbital Trident Cannon"));
             List<Component> lore = new ArrayList<>();
             lore.add(Component.text("Radius: " + radius));
-            lore.add(Component.text("Payload: " + count + " Tridents"));
+            lore.add(Component.text("Payload: " + count + " Tridents/Wave"));
+            lore.add(Component.text("Waves: " + waves + " (Delay: " + delay + "t)"));
             meta.lore(lore);
             
             meta.getPersistentDataContainer().set(weaponKey, PersistentDataType.STRING, "orbital_cannon");
             
-            // Stamp the geometry data onto the item
+            // Stamp the geometry and wave data onto the item
             meta.getPersistentDataContainer().set(radiusKey, PersistentDataType.DOUBLE, radius);
             meta.getPersistentDataContainer().set(countKey, PersistentDataType.INTEGER, count);
+            meta.getPersistentDataContainer().set(wavesKey, PersistentDataType.INTEGER, waves);
+            meta.getPersistentDataContainer().set(delayKey, PersistentDataType.LONG, delay);
             
             meta.setUnbreakable(true);
             trident.setItemMeta(meta);
             
             player.getInventory().addItem(trident);
-            player.sendMessage(Component.text("Equipped Parametric Orbital Cannon (R: " + radius + ", C: " + count + ")."));
+            player.sendMessage(Component.text("Equipped Parametric Orbital Cannon (R: " + radius + ", C: " + count + ", W: " + waves + ")."));
         }
         return true;
     }
@@ -98,12 +117,17 @@ public final class OrbitalTridentPlugin extends JavaPlugin implements Listener, 
                 if ("orbital_cannon".equals(id)) {
                     trident.getPersistentDataContainer().set(thrownKey, PersistentDataType.BYTE, (byte) 1);
                     
-                    // Transfer parameter data to the thrown entity
+                    // Transfer all parameter data to the thrown entity
                     if (item.getItemMeta().getPersistentDataContainer().has(radiusKey, PersistentDataType.DOUBLE)) {
                         double r = item.getItemMeta().getPersistentDataContainer().get(radiusKey, PersistentDataType.DOUBLE);
                         int c = item.getItemMeta().getPersistentDataContainer().get(countKey, PersistentDataType.INTEGER);
+                        int w = item.getItemMeta().getPersistentDataContainer().getOrDefault(wavesKey, PersistentDataType.INTEGER, 1);
+                        long d = item.getItemMeta().getPersistentDataContainer().getOrDefault(delayKey, PersistentDataType.LONG, 20L);
+                        
                         trident.getPersistentDataContainer().set(radiusKey, PersistentDataType.DOUBLE, r);
                         trident.getPersistentDataContainer().set(countKey, PersistentDataType.INTEGER, c);
+                        trident.getPersistentDataContainer().set(wavesKey, PersistentDataType.INTEGER, w);
+                        trident.getPersistentDataContainer().set(delayKey, PersistentDataType.LONG, d);
                     }
                 }
             }
@@ -122,21 +146,22 @@ public final class OrbitalTridentPlugin extends JavaPlugin implements Listener, 
             
             if (hitLoc == null) return;
             
-            // Extract geometry data before deletion
+            // Extract geometry and wave data before deletion
             double radius = trident.getPersistentDataContainer().getOrDefault(radiusKey, PersistentDataType.DOUBLE, 9.0);
             int count = trident.getPersistentDataContainer().getOrDefault(countKey, PersistentDataType.INTEGER, 241);
+            int waves = trident.getPersistentDataContainer().getOrDefault(wavesKey, PersistentDataType.INTEGER, 1);
+            long delay = trident.getPersistentDataContainer().getOrDefault(delayKey, PersistentDataType.LONG, 20L);
             
-            // Instantly despawn the original trident
             trident.remove();
 
             Location finalHitLoc = hitLoc.clone();
             Player shooter = trident.getShooter() instanceof Player ? (Player) trident.getShooter() : null;
 
-            // Initiate strike delay
+            // Initiate the staggered strike
             new BukkitRunnable() {
                 @Override
                 public void run() {
-                    launchOrbitalStrike(finalHitLoc, shooter, radius, count);
+                    launchOrbitalStrike(finalHitLoc, shooter, radius, count, waves, delay);
                 }
             }.runTaskLater(this, 15); 
         }
@@ -151,7 +176,6 @@ public final class OrbitalTridentPlugin extends JavaPlugin implements Listener, 
                 }
             }
             
-            // Clean them up after a few seconds
             new BukkitRunnable() {
                 @Override
                 public void run() {
@@ -163,32 +187,45 @@ public final class OrbitalTridentPlugin extends JavaPlugin implements Listener, 
         }
     }
 
-    private void launchOrbitalStrike(Location target, Player shooter, double maxRadius, int totalCount) {
+    private void launchOrbitalStrike(Location target, Player shooter, double maxRadius, int tridentsPerWave, int totalWaves, long delayTicks) {
         double startY = Math.min(target.getWorld().getMaxHeight() - 5, target.getY() + 60);
 
         ItemStack channeledTrident = new ItemStack(Material.TRIDENT);
         channeledTrident.addEnchantment(Enchantment.CHANNELING, 1);
-        Random random = new Random();
 
-        for (int i = 0; i < totalCount; i++) {
-            // V4: Uniform Disk Distribution Math
-            double r = maxRadius * Math.sqrt(random.nextDouble());
-            double theta = random.nextDouble() * 2 * Math.PI;
-            
-            double x = r * Math.cos(theta);
-            double z = r * Math.sin(theta);
+        new BukkitRunnable() {
+            int currentWave = 0;
+            Random random = new Random();
 
-            Location spawnLoc = target.clone().add(x, 0, z);
-            spawnLoc.setY(startY);
+            @Override
+            public void run() {
+                if (currentWave >= totalWaves) {
+                    cancel();
+                    return;
+                }
 
-            Trident rainingTrident = target.getWorld().spawn(spawnLoc, Trident.class);
-            
-            rainingTrident.getPersistentDataContainer().set(rainKey, PersistentDataType.BYTE, (byte) 1);
-            if (shooter != null) rainingTrident.setShooter(shooter);
-            
-            rainingTrident.setVelocity(new Vector(0, -4.0, 0));
-            rainingTrident.setItem(channeledTrident); 
-            rainingTrident.setPickupStatus(AbstractArrow.PickupStatus.DISALLOWED);
-        }
+                for (int i = 0; i < tridentsPerWave; i++) {
+                    double r = maxRadius * Math.sqrt(random.nextDouble());
+                    double theta = random.nextDouble() * 2 * Math.PI;
+                    
+                    double x = r * Math.cos(theta);
+                    double z = r * Math.sin(theta);
+
+                    Location spawnLoc = target.clone().add(x, 0, z);
+                    spawnLoc.setY(startY);
+
+                    Trident rainingTrident = target.getWorld().spawn(spawnLoc, Trident.class);
+                    
+                    rainingTrident.getPersistentDataContainer().set(rainKey, PersistentDataType.BYTE, (byte) 1);
+                    if (shooter != null) rainingTrident.setShooter(shooter);
+                    
+                    rainingTrident.setVelocity(new Vector(0, -4.0, 0));
+                    rainingTrident.setItem(channeledTrident); 
+                    rainingTrident.setPickupStatus(AbstractArrow.PickupStatus.DISALLOWED);
+                }
+                
+                currentWave++;
+            }
+        }.runTaskTimer(this, 0, delayTicks);
     }
 }
